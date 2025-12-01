@@ -106,21 +106,32 @@ end
 % Detect left turns (heading change < threshold)
 function indices = detect_left_turns(headings, speeds, threshold)
     indices = [];
-    for i = 2:length(headings)
-        % Only check when moving
-        if speeds(i) > 1.0
-            delta = headings(i) - headings(i-1);
-            
-            % Normalize to [-180, 180]
-            if delta > 180
-                delta = delta - 360;
-            elseif delta < -180
-                delta = delta + 360;
+    WINDOW_SIZE = 5; % Look at last 5 points
+    
+    for i = WINDOW_SIZE+1:length(headings)
+        % Check if moving
+        if speeds(i) > 0.5
+            % Calculate total heading change over window
+            total_delta = 0;
+            for j = (i-WINDOW_SIZE+1):i
+                delta = headings(j) - headings(j-1);
+                
+                % Normalize
+                if delta > 180
+                    delta = delta - 360;
+                elseif delta < -180
+                    delta = delta + 360;
+                end
+                
+                total_delta = total_delta + delta;
             end
             
-            % Detect left turn
-            if delta <= threshold
-                indices = [indices; i];
+            % Detect significant left turn
+            if total_delta <= threshold
+                % Avoid duplicates
+                if isempty(indices) || (i - indices(end)) > WINDOW_SIZE
+                    indices = [indices; i];
+                end
             end
         end
     end
