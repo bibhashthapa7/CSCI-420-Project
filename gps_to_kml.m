@@ -87,13 +87,66 @@ function gps_data = read_gps_file(filename)
     fid = fopen(filename, 'r');
     gps_data = [];
 
+    % Track last valid point
+    last_latitude = NaN;
+    last_longitude = NaN;
+    last_speed = NaN;
+
     while ~feof(fid)
         line = fgetl(fid);
-        if ischar(line) && strncmp(line, '$GPRMC', 6)
-            point = parse_gprmc(line);
-            if ~isempty(point)
-                gps_data = [gps_data; point]; 
+
+        if ~ischar(line)
+           continue;
+        end
+        
+        % Handle multiple GPS sentences in same line
+        sentences = strsplit(line, '$');
+
+        % Process each GPRMC sentence
+        for i = 1:length(sentences)
+            sentence = strtrim(sentences{i});
+
+            % Skip empty strings and non-GPRMC sentences
+            if isempty(sentence) || ~strncmp(sentence, 'GPRMC', 5)
+                continue;
             end
+            
+            % Parse sentence
+            point = parse_gprmc(['$' sentence]);
+            if isempty(point)
+                continue;
+            end
+            
+            latitude = point(1);
+            longitude = point(2);
+            speed = point(3);
+
+            % Filter speed outliers
+            if speed > 100.0
+                continue;
+            end
+
+            % Compare with last valid point if it exists
+            if ~isnan(last_latitude)
+                % Calculate distance between consecutive points
+                distance_km = haversine_distance(last_latitude, last_longitude, latitude, longitude);
+
+                % Filter distance outliers
+                if distance_km > 1.0
+                    continue;
+                end
+
+                % Remove duplicate stationary points
+                if speed < 0.5 && last_speed < 0.5 && distance_km < 0.01
+                    continue;
+                end
+            end
+
+            % Store valid point
+            gps_data = [gps_data; point];
+            last_latitude = latitude;
+            last_longitude = longitude;
+            last_speed = speed;
         end
     end
     fclose(fid);
@@ -239,8 +292,9 @@ function write_kml(filename, lat, lon, stops, turns, alt)
     fclose(fid);
 end
 
+% Calculate trip duration from first to last moving point
 function [duration, start_index, end_index] = calculate_trip_duration(speeds, times, threshold)
-    % Find first poiint where vehicle is moving
+    % Find first point where vehicle is moving
     moving_indices = find(speeds >= threshold);
 
     if isempty(moving_indices)
@@ -251,7 +305,7 @@ function [duration, start_index, end_index] = calculate_trip_duration(speeds, ti
         return;
     end
 
-    % Extract first and last movign points
+    % Extract first and last moving points
     start_index = moving_indices(1);
     end_index = moving_indices(end);
 
@@ -259,6 +313,7 @@ function [duration, start_index, end_index] = calculate_trip_duration(speeds, ti
     duration = times(end_index) - times(start_index);
 end
 
+% Detect if GPS started/stopped and estimate missing time
 function [missing_start_time, missing_end_time] = detect_missing_data(speeds, threshold)
     missing_start_time = 0;
     missing_end_time = 0;
@@ -277,4 +332,21 @@ function [missing_start_time, missing_end_time] = detect_missing_data(speeds, th
         average_deceleration = 2.0; 
         missing_end_time = speeds(end) / average_deceleration;
     end
+end
+
+% Calculate distance between two GPS points using Haversine formula
+function distance_km = haversine_distance(lat1, lon1, lat2, lon2)
+    % Earth radius in kilometers
+    R = 6371.0;
+    
+    % Convert degrees to radians
+    lat1_rad = deg2rad(lat1);
+    lat2_rad = deg2rad(lat2);
+    delta_lat = deg2rad(lat2 - lat1);
+    delta_lon = deg2rad(lon2 - lon1);
+    
+    % Haversine formula
+    a = sin(delta_lat/2)^2 + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon/2)^2;
+    c = 2 * atan2(sqrt(a), sqrt(1-a));
+    distance_km = R * c;
 end
