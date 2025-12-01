@@ -14,6 +14,7 @@ function gps_to_kml(gps_filename)
     ALTITUDE = 3.0; % fixed altitude for all points (in meters)
     STOP_THRESHOLD = 0.5; % threshold (in knots) below which vehicle is stopped
     LEFT_TURN_THRESHOLD = -30; % heading change threshold (degrees)
+    MOVING_THRESHOLD = 1.0; % speed threshold to consider the vehicle as moving
 
     % Build full paths
     gps_file = fullfile('gps_data', gps_filename);
@@ -27,6 +28,7 @@ function gps_to_kml(gps_filename)
         mkdir('kml_data');
     end
         
+    % Step 1: 
     % Read and parse GPS data:
     gps_data = read_gps_file(gps_file);
 
@@ -35,15 +37,28 @@ function gps_to_kml(gps_filename)
     longitudes = gps_data(:, 2);
     speeds = gps_data(:, 3);
     headings = gps_data(:, 4);
+    times = gps_data(:, 5);
 
+    % Step 2: 
     % Detect stops and turns
     stop_indices = detect_stops(speeds, STOP_THRESHOLD);
     turn_indices = detect_left_turns(headings, speeds, LEFT_TURN_THRESHOLD);
 
     % Write KML file
     write_kml(kml_file, latitudes, longitudes, stop_indices, turn_indices, ALTITUDE);
-    
     fprintf('Generated: %s\n', kml_file);
+
+    % Step 3:
+    % Calculate trip duration
+    [duration, start_index, end_index] = calculate_trip_duration(speeds, times, MOVING_THRESHOLD);
+
+    % Print trip duration
+    fprintf('\nTrip Analysis:\n');
+    fprintf('Total GPS points: %d\n', length(latitudes));
+    fprintf('First moving point: %d\n', start_index);
+    fprintf('Last moving point: %d\n', end_index);
+    fprintf('Trip duration: %.2f seconds (%.2f minutes)\n', duration, duration/60);
+
 end
 
 % Read GPS file and parse GPRMC sentences
@@ -80,9 +95,20 @@ function point = parse_gprmc(line)
     % Parse speed and heading
     speed = str2double(parts{8});
     heading = str2double(parts{9});
+
+    % Parse time
+    time_str = parts{2};
+    if ~isempty(time_str) && length(time_str) >= 6
+        hours = str2double(time_str(1:2));
+        minutes = str2double(time_str(3:4));
+        seconds = str2double(time_str(5:end));
+        time_seconds = hours * 3600 + minutes * 60 + seconds;
+    else
+        time_seconds = 0;
+    end
     
     % Return as row vector
-    point = [latitude, longitude, speed, heading];
+    point = [latitude, longitude, speed, heading, time_seconds];
 end
 
 % Convert GPS coordinate from DDMM.MMMM format to decimal degrees
@@ -190,4 +216,24 @@ function write_kml(filename, lat, lon, stops, turns, alt)
     
     fprintf(fid,'</Document></kml>\n');
     fclose(fid);
+end
+
+function [duration, start_index, end_index] = calculate_trip_duration(speeds, times, threshold)
+    % Find first poiint where vehicle is moving
+    moving_indices = find(speeds >= threshold);
+
+    if isempty(moving_indices)
+        % No movement detected
+        duration = 0;
+        start_index = 1;
+        end_index = length(speeds);
+        return;
+    end
+
+    % Extract first and last movign points
+    start_index = moving_indices(1);
+    end_index = moving_indices(end);
+
+    % Calculate duration
+    duration = times(end_index) - times(start_index);
 end
