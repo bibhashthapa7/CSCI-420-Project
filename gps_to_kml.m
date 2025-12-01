@@ -48,16 +48,37 @@ function gps_to_kml(gps_filename)
     write_kml(kml_file, latitudes, longitudes, stop_indices, turn_indices, ALTITUDE);
     fprintf('Generated: %s\n', kml_file);
 
-    % Step 3:
+    % Step 3 & 4:
     % Calculate trip duration
     [duration, start_index, end_index] = calculate_trip_duration(speeds, times, MOVING_THRESHOLD);
 
-    % Print trip duration
+    % Step 5:
+    % Check if GPS started or stopped while car is moving, and estimate
+    % missing time
+    [missing_start_time, missing_end_time] = detect_missing_data(speeds, MOVING_THRESHOLD);
+
+    % Calculate total estimated trip duration
+    total_duration = duration + missing_start_time + missing_end_time;
+
+    % Print trip analysis
     fprintf('\nTrip Analysis:\n');
     fprintf('Total GPS points: %d\n', length(latitudes));
-    fprintf('First moving point: %d\n', start_index);
-    fprintf('Last moving point: %d\n', end_index);
-    fprintf('Trip duration: %.2f seconds (%.2f minutes)\n', duration, duration/60);
+    fprintf('First moving point: %d (speed: %.2f knots)\n', start_index, speeds(start_index));
+    fprintf('Last moving point: %d (speed: %.2f knots)\n', end_index, speeds(end_index));
+    fprintf('Recorded trip duration: %.2f seconds (%.2f minutes)\n', duration, duration/60);
+
+    if missing_start_time > 0 || missing_end_time > 0
+        fprintf('\nMissing data detected:\n');
+        if missing_start_time > 0
+            fprintf('GPS started mid-drive (car already moving)\n');
+            fprintf('Estimated missing time at start: %.2f seconds\n', missing_start_time);
+        end
+        if missing_end_time > 0
+            fprintf('GPS stopped mid-drive (car still moving)\n');
+            fprintf('Estimated missing time at end: %.2f seconds\n', missing_end_time);
+        end
+        fprintf('Total estimated trip duration: %.2f seconds (%.2f minutes)\n', total_duration, total_duration/60);
+    end
 
 end
 
@@ -236,4 +257,24 @@ function [duration, start_index, end_index] = calculate_trip_duration(speeds, ti
 
     % Calculate duration
     duration = times(end_index) - times(start_index);
+end
+
+function [missing_start_time, missing_end_time] = detect_missing_data(speeds, threshold)
+    missing_start_time = 0;
+    missing_end_time = 0;
+
+    % Check if first GPS point shows car is moving
+    if speeds(1) >= threshold
+        % Estimate time to accelerate from 0 to first recorded speed
+        % Assume typical acceleration of 2 knots/second
+        average_acceleration = 2.0;
+        missing_start_time = speeds(1) / average_acceleration;
+    end
+
+    % Check if last GPS point shows car is moving
+    if speeds(end) >= threshold
+        % Estimate time to decelerate from last recorded speed to 0
+        average_deceleration = 2.0; 
+        missing_end_time = speeds(end) / average_deceleration;
+    end
 end
